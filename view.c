@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
+#include <assert.h>
 #include "view.h"
 #include "text.h"
 #include "text-motions.h"
@@ -178,62 +179,74 @@ static int view_max_text_width(const View *view) {
 }
 
 static void view_wrap_line(View *view) {
-	Line *cur_line = view->line;
-	int cur_col = view->col;
-	int wrapcol = (view->wrapcol > 0) ? view->wrapcol : cur_col;
-	
-	view->line = cur_line->next;
+	int col = view->col;
+	int wrapcol = (view->wrapcol > 0) ? view->wrapcol : view->col;
+	Line *wrapped_line = view->line;
+
+	view->line = view->line->next;
 	view->col = 0;
 	view->wrapcol = 0;
+
 	if (view->line) {
+		view->line->lineno = wrapped_line->lineno;
 		/* move extra cells to the next line */
-		for (int i = wrapcol; i < cur_col; ++i) {
-			const Cell *cell = &cur_line->cells[i];
-			view_add_cell(view, cell);
-			cur_line->width -= cell->width;
-			cur_line->len -= cell->len;
+		for (int i = wrapcol; i < col; ++i) {
+			const Cell *cell = &wrapped_line->cells[i];
+			view->line->width += cell->width;
+			view->line->len += cell->len;
+			assert(view->col < view->width);
+			view->line->cells[view->col++] = *cell;
 		}
 	}
+
+	/* clear remaining of line */
 	for (int i = wrapcol; i < view->width; ++i) {
-		/* clear remaining of line */
-		cur_line->cells[i] = view->cell_blank;
+		if (i < col) {
+			wrapped_line->width -= wrapped_line->cells[i].width;
+			wrapped_line->len -= wrapped_line->cells[i].len;
+		}
+		wrapped_line->cells[i] = view->cell_blank;
 	}
 }
 
 static bool view_add_cell(View *view, const Cell *cell) {
-	size_t lineno = view->line->lineno;
-	
-	if (view->col + cell->width > view_max_text_width(view))
+	/* at most one iteration most of the time */
+	while (view->col + cell->width > view_max_text_width(view)) {
 		view_wrap_line(view);
+		if (!view->line)
+			return false;
+	}
 
-	if (!view->line)
-		return false;
 	view->line->width += cell->width;
 	view->line->len += cell->len;
-	view->line->lineno = lineno;
-	view->line->cells[view->col] = *cell;
-	view->col++;
-	/* set cells of a character which uses multiple columns */
-	for (int i = 1; i < cell->width; i++)
-		view->line->cells[view->col++] = cell_unused;
+	for (int i = 0; i < cell->width; ++i) {
+		assert(view->col < view->width);
+		if (i == 0) {
+			view->line->cells[view->col++] = *cell;
+		} else {
+			/* set cells of a character which uses multiple columns */
+			view->line->cells[view->col++] = cell_unused;
+		}
+	}
+
 	return true;
 }
 
 static bool view_expand_tab(View *view, Cell *cell) {
 	cell->width = 1;
-	
+
 	int displayed_width = view->tabwidth - (view->col % view->tabwidth);
 	for (int w = 0; w < displayed_width; ++w) {
-	
+
 		int t = (w == 0) ? SYNTAX_SYMBOL_TAB : SYNTAX_SYMBOL_TAB_FILL;
 		const char *symbol = view->symbols[t]->symbol;
 		strncpy(cell->data, symbol, sizeof(cell->data) - 1);
 		cell->len = (w == 0) ? 1 : 0;
-		
+
 		if (!view_add_cell(view, cell))
 			return false;
 	}
-	
+
 	cell->len = 1;
 	return true;
 }
@@ -241,7 +254,7 @@ static bool view_expand_tab(View *view, Cell *cell) {
 static bool view_expand_newline(View *view, Cell *cell) {
 	size_t lineno = view->line->lineno;
 	const char *symbol = view->symbols[SYNTAX_SYMBOL_EOL]->symbol;
-	
+
 	strncpy(cell->data, symbol, sizeof(cell->data) - 1);
 	cell->width = 1;
 	if (!view_add_cell(view, cell))
@@ -267,7 +280,7 @@ static bool view_addch(View *view, Cell *cell) {
 	}
 	view->prevch_breakat = ch_breakat;
 	cell->style = view->cell_blank.style;
-	
+
 	switch (ch) {
 	case '\t':
 		return view_expand_tab(view, cell);
@@ -561,7 +574,7 @@ View *view_new(Text *text) {
 		view_free(view);
 		return NULL;
 	}
-	
+
 	view_cursor_to(view, 0);
 	return view;
 }
