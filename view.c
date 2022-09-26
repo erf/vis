@@ -272,8 +272,7 @@ static bool view_addch(View *view, Cell *cell) {
 	if (!view->line)
 		return false;
 
-	unsigned char ch = (unsigned char)cell->data[0];
-	bool ch_breakat = strstr(view->breakat, cell->data);
+	bool ch_breakat = (cell->data[0] != 0) && strstr(view->breakat, cell->data);
 	if (view->prevch_breakat && !ch_breakat) {
 		/* this is a good place to wrap line if needed */
 		view->wrapcol = view->col;
@@ -281,6 +280,7 @@ static bool view_addch(View *view, Cell *cell) {
 	view->prevch_breakat = ch_breakat;
 	cell->style = view->cell_blank.style;
 
+	unsigned char ch = (unsigned char)cell->data[0];
 	switch (ch) {
 	case '\t':
 		return view_expand_tab(view, cell);
